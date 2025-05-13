@@ -1,4 +1,4 @@
-import puppeteer, { Browser } from 'puppeteer';
+import puppeteer, { Browser, Page } from 'puppeteer';
 import { SearchResult, UrlCheckResult } from '../types';
 import { PUPPETEER_LAUNCH_OPTIONS } from '../constants';
 
@@ -13,6 +13,46 @@ export class UrlChecker {
     if (this.browser) {
       await this.browser.close();
       this.browser = null;
+    }
+  }
+
+  private async checkForCaptcha(page: Page): Promise<boolean> {
+    try {
+      // Check for common CAPTCHA indicators
+      const captchaSelectors = [
+        '#captcha-form',
+        '#recaptcha',
+        'form#captcha-form',
+        'iframe[src*="recaptcha"]',
+        'div.g-recaptcha',
+        'div[data-sitekey]',
+        'div.recaptcha-checkbox-border'
+      ];
+
+      for (const selector of captchaSelectors) {
+        const element = await page.$(selector);
+        if (element) {
+          return true;
+        }
+      }
+
+      // Check page content for CAPTCHA-related text
+      const pageContent = await page.content();
+      const captchaKeywords = [
+        'captcha',
+        'recaptcha',
+        'verify you are human',
+        'verify you are not a robot',
+        'unusual traffic',
+        'automated queries'
+      ];
+
+      return captchaKeywords.some(keyword => 
+        pageContent.toLowerCase().includes(keyword.toLowerCase())
+      );
+    } catch (error) {
+      console.error('Error checking for CAPTCHA:', error);
+      return false;
     }
   }
 
@@ -66,6 +106,17 @@ export class UrlChecker {
         waitUntil: 'networkidle0',
         timeout: 15000,
       });
+
+      // Check for CAPTCHA
+      const hasCaptcha = await this.checkForCaptcha(page);
+      if (hasCaptcha) {
+        return {
+          url: parsedUrl.toString(),
+          isIndexed: false,
+          error: "CAPTCHA detected. Please try again later or use a different IP address.",
+          lastChecked: new Date().toISOString(),
+        };
+      }
 
       // Add random delay after page load
       await new Promise(resolve => setTimeout(resolve, Math.random() * 1000 + 500));
